@@ -24,6 +24,13 @@
 #define RC5_ADDR        16
 #define RC_ON_OFF       12
 
+#define GAS_VALVE_POS_PIN   4
+#define GAS_VALVE_NEG_PIN   5
+#define GAS_VALVE_POS_ADC   5
+#define GAS_VALVE_MAX_POS   1023
+#define GAS_VALVE_OFF_POS   0
+#deifne GAS_VALVE_TYP_POS   512
+
 enum fsm_states {fsm_idle,fsm_active,fsm_fault};
 fsm_states curr_state = fsm_idle;
 
@@ -32,6 +39,7 @@ fsm_states curr_state = fsm_idle;
 //------------------------------------------------
 
 unsigned char rc5_prev_toogle = 1;
+unsigned char fault_ok_cntr = 0;
 
 //-----------------------------------------------
 //Setup function:
@@ -47,6 +55,12 @@ void setup() {
 
   //Setup RC-5 receiver:
   RC5 rc5(IR_PIN);
+
+  //Gas valve control pin setup:
+  pinMode(GAS_VALVE_POS_PIN,OUTPUT);
+  digitalWrite(GAS_VALVE_POS_PIN,LOW);
+  pinMode(GAS_VALVE_NEG_PIN,OUTPUT);
+  digitalWrite(GAS_VALVE_NEG_PIN,LOW);
 }
 
 //-----------------------------------------------
@@ -69,16 +83,16 @@ void loop() {
           {
             if (rc5_command == RC_ON_OFF)
             {
-              //Gass valve must be open max and with delay, so that there is enough gas
+              gas_valve_cntrl(GAS_VALVE_MAX_POS);
               ignition_spark_cntrl(IGN_TIME);
               if (chck_flame(FLAME_THRES))
               {
-                //Gas valve must be set to typical position
+                gas_valve_cntrl(GAS_VALVE_TYP_POS);
                 curr_state = fsm_active;
               }
               else
               {
-                //Gas valve must be turned off
+                gas_valve_cntrl(GAS_VALVE_OFF_POS);
                 curr_state = fsm_fault;
               }
             }
@@ -98,6 +112,18 @@ void loop() {
     case fsm_active:
       break;
     case fsm_fault:
+      while (fault_ok_cntr < 60)
+      {
+        if (chck_air(AIR_Q_THRES))
+        {
+          fault_ok_cntr = 0;
+        }
+        else
+        {
+          fault_ok_cntr++;
+        }
+      }
+      delay(1000);
       break;
   }
 }
@@ -157,6 +183,46 @@ void ignition_spark_cntrl(unsigned int spark_on_dly) //delay in seconds
   digitalWrite(IGN_CNTRL,HIGH); //Start ignition
   delay(spark_on_dly*1000);
   digitalWrite(IGN_CNTRL,LOW); //Start ignition
+}
+
+//------------------------------------------------
+//Gas valve control:
+//------------------------------------------------
+
+boolean gas_valve_cntrl(unsigned int valve_pos)
+{
+  unsigned int cur_pos = analogRead(GAS_VALVE_POS_ADC);
+  //Control if valve needs to be implemented in the future for the safety reasons
+  if (valve_pos < cur_pos)
+  {
+    digitalWrite(GAS_VALVE_POS_PIN,HIGH);
+    digitalWrite(GAS_VALVE_NEG_PIN,LOW);
+    cur_pos = analogRead(GAS_VALVE_POS_ADC);
+    while (valve_pos < cur_pos)
+    {
+      cur_pos = analogRead(GAS_VALVE_POS_ADC);
+      delay(5);
+    }
+    digitalWrite(GAS_VALVE_POS_PIN,LOW);
+  }
+  else if (valve_pos > cur_pos)
+  {
+    digitalWrite(GAS_VALVE_POS_PIN,LOW);
+    digitalWrite(GAS_VALVE_NEG_PIN,HIGH);
+    cur_pos = analogRead(GAS_VALVE_POS_ADC);
+    while (valve_pos > cur_pos)
+    {
+      cur_pos = analogRead(GAS_VALVE_POS_ADC);
+      delay(5);
+    }
+    digitalWrite(GAS_VALVE_NEG_PIN,LOW);
+  }
+  else
+  {
+    return true;
+  }
+
+  return true;
 }
 
 //------------------------------------------------

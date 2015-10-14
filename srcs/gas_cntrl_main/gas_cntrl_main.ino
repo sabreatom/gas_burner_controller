@@ -1,12 +1,12 @@
 //------------------------------------------------
 //Includes:
---------------------------------------------------
+//--------------------------------------------------
 
-#include "RC5.h"
+#include <IRremote.h>
 
 //------------------------------------------------
 //Defines:
---------------------------------------------------
+//--------------------------------------------------
 
 //#define AIR_SENSOR_0    0
 //#deifne AIR_SENSOR_1    1
@@ -20,16 +20,16 @@
 #define IGN_CNTRL       2
 #define IGN_TIME        3 //ignition spark on time in seconds
 
-#define IR_PIN          3
-#define RC5_ADDR        16
-#define RC_ON_OFF       12
+int RECV_PIN = 11; 
+#define RC_ON           0xC101E57B
+#define RC_OFF          0x97483BFB
 
 #define GAS_VALVE_POS_PIN   4
 #define GAS_VALVE_NEG_PIN   5
 #define GAS_VALVE_POS_ADC   5
 #define GAS_VALVE_MAX_POS   1023
 #define GAS_VALVE_OFF_POS   0
-#deifne GAS_VALVE_TYP_POS   512
+#define GAS_VALVE_TYP_POS   512
 
 enum fsm_states {fsm_idle,fsm_active,fsm_fault};
 fsm_states curr_state = fsm_idle;
@@ -37,6 +37,9 @@ fsm_states curr_state = fsm_idle;
 //------------------------------------------------
 //Global variables:
 //------------------------------------------------
+
+IRrecv irrecv(RECV_PIN);
+decode_results results;
 
 unsigned char rc5_prev_toogle = 1;
 unsigned char fault_ok_cntr = 0;
@@ -54,7 +57,7 @@ void setup() {
   digitalWrite(IGN_CNTRL,LOW);
 
   //Setup RC-5 receiver:
-  RC5 rc5(IR_PIN);
+  irrecv.enableIRIn(); // Start the receiver
 
   //Gas valve control pin setup:
   pinMode(GAS_VALVE_POS_PIN,OUTPUT);
@@ -68,37 +71,25 @@ void setup() {
 //-----------------------------------------------
 
 void loop() {
-  unsigned char rc5_toogle;
-  unsigned char rc5_address;
-  unsigned char rc5_command;
-  
   switch(curr_state)
   {
     case fsm_idle:
-      if (rc5.read(&rc5_toogle,&rc5_address,&rc5_command))
+      if (irrecv.decode(&results))
       {
-        if (rc5_address == RC5_ADDR)
+        if (results.value == RC_ON)
         {
-          if (rc5_toogle != rc5_prev_toogle)
+          gas_valve_cntrl(GAS_VALVE_MAX_POS);
+          ignition_spark_cntrl(IGN_TIME);
+          if (chck_flame(FLAME_THRES))
           {
-            if (rc5_command == RC_ON_OFF)
-            {
-              gas_valve_cntrl(GAS_VALVE_MAX_POS);
-              ignition_spark_cntrl(IGN_TIME);
-              if (chck_flame(FLAME_THRES))
-              {
-                gas_valve_cntrl(GAS_VALVE_TYP_POS);
-                curr_state = fsm_active;
-              }
-              else
-              {
-                gas_valve_cntrl(GAS_VALVE_OFF_POS);
-                curr_state = fsm_fault;
-              }
-            }
+            gas_valve_cntrl(GAS_VALVE_TYP_POS);
+            curr_state = fsm_active;
           }
-
-          rc5_prev_toogle = rc5_toogle;
+          else
+          {
+            gas_valve_cntrl(GAS_VALVE_OFF_POS);
+            curr_state = fsm_fault;
+          }
         }
       }
 
@@ -165,13 +156,13 @@ boolean chck_flame(unsigned int f_thres)
 
     if (data <= f_thres)
     {
-      return false
+      return false;
     }
 
     delay(5);
   }
 
-  return true
+  return true;
 }
 
 //------------------------------------------------

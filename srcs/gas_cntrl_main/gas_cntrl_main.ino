@@ -10,7 +10,7 @@
 
 //#define AIR_SENSOR_0    0
 //#deifne AIR_SENSOR_1    1
-#define AIR_Q_THRES     150
+#define AIR_Q_THRES     800
 
 //#define FLAME_CH0       2
 //#define FLAME_CH1       3
@@ -27,12 +27,23 @@ int RECV_PIN = 11;
 #define GAS_VALVE_POS_PIN   4
 #define GAS_VALVE_NEG_PIN   5
 #define GAS_VALVE_POS_ADC   5
-#define GAS_VALVE_MAX_POS   1023
-#define GAS_VALVE_OFF_POS   0
-#define GAS_VALVE_TYP_POS   512
+#define GAS_VALVE_MAX_POS   950
+#define GAS_VALVE_OFF_POS   350
+#define GAS_VALVE_TYP_POS   700
+#define GAS_VALVE_ON        1
+#define GAS_VALVE_OFF       0
+#define GAS_VALVE_STOP      2
+
+#define ACTIVE_LED          6
+#define FAULT_LED           7
+
+#define AUDIO_SEL_PIN       8
+#define AUDIO_DIS_PIN       9
 
 enum fsm_states {fsm_idle,fsm_active,fsm_fault};
 fsm_states curr_state = fsm_idle;
+
+enum audio_states {audio_in_sig,alarm_sig,audio_off};
 
 //------------------------------------------------
 //Global variables:
@@ -44,6 +55,17 @@ decode_results results;
 unsigned char rc5_prev_toogle = 1;
 unsigned char fault_ok_cntr = 0;
 
+//------------------------------------------------
+//Functions:
+//------------------------------------------------
+
+void audio_cntrl(audio_states nxt_state);
+boolean chck_air(unsigned int air_thres);
+boolean chck_flame(unsigned int f_thres);
+void ignition_spark_cntrl(unsigned int spark_on_dly);
+boolean gas_valve_cntrl(unsigned int valve_pos);
+void gas_valve_act(unsigned char state);
+
 //-----------------------------------------------
 //Setup function:
 //-----------------------------------------------
@@ -54,7 +76,7 @@ void setup() {
   
   //Setup ignition spark control pin:
   pinMode(IGN_CNTRL,OUTPUT);
-  digitalWrite(IGN_CNTRL,LOW);
+  digitalWrite(IGN_CNTRL,HIGH); //Ignition control is active low
 
   //Setup RC-5 receiver:
   irrecv.enableIRIn(); // Start the receiver
@@ -64,6 +86,17 @@ void setup() {
   digitalWrite(GAS_VALVE_POS_PIN,LOW);
   pinMode(GAS_VALVE_NEG_PIN,OUTPUT);
   digitalWrite(GAS_VALVE_NEG_PIN,LOW);
+
+  pinMode(ACTIVE_LED,OUTPUT);
+  digitalWrite(ACTIVE_LED,LOW);
+  pinMode(FAULT_LED,OUTPUT);
+  digitalWrite(FAULT_LED,LOW);
+
+  pinMode(AUDIO_SEL_PIN,OUTPUT);
+  digitalWrite(AUDIO_SEL_PIN,LOW);
+  pinMode(AUDIO_DIS_PIN,OUTPUT);
+  digitalWrite(AUDIO_DIS_PIN,HIGH);
+  Serial.println("Starting system");
 }
 
 //-----------------------------------------------
@@ -73,37 +106,63 @@ void setup() {
 void loop() {
   switch(curr_state)
   {
-    case fsm_idle:
+    case fsm_idle:                                    //IDLE state
       if (irrecv.decode(&results))
       {
         if (results.value == RC_ON)
         {
+          Serial.println("Starting ignition");
           gas_valve_cntrl(GAS_VALVE_MAX_POS);
           ignition_spark_cntrl(IGN_TIME);
           if (chck_flame(FLAME_THRES))
           {
+            Serial.println("Flame OK, jumping to active");
             gas_valve_cntrl(GAS_VALVE_TYP_POS);
             curr_state = fsm_active;
+            digitalWrite(ACTIVE_LED,HIGH);
           }
           else
           {
+            Serial.println("Flame not OK, jumping to fault");
             gas_valve_cntrl(GAS_VALVE_OFF_POS);
             curr_state = fsm_fault;
           }
+
+          irrecv.resume();
         }
       }
 
-      if (chck_air(AIR_Q_THRES))
+      if (chck_air(AIR_Q_THRES))                   //Check air quality
       {
+        Serial.println("Jumping to fault");
         curr_state = fsm_fault;
         //Need to enable alarm audio signal
       }
       
       break;
-    case fsm_active:
+    case fsm_active:                                //ACTIVE state
+      if (irrecv.decode(&results))
+      {
+        if (results.value == RC_OFF)
+        {
+          Serial.println("OFF");
+          curr_state = fsm_idle;
+          gas_valve_cntrl(GAS_VALVE_OFF_POS);
+        }
+        //Add commands parsing for flame increase and decrease
+        irrecv.resume();
+      }
+
+      if (chck_air(AIR_Q_THRES))                    //Check air quality
+      {
+        Serial.println("Active fault");
+        curr_state = fsm_fault;
+        gas_valve_cntrl(GAS_VALVE_OFF_POS);
+        //Need to enable alarm audio signal
+      }
       break;
-    case fsm_fault:
-      while (fault_ok_cntr < 60)
+    case fsm_fault:                                 //FAULT state
+      if (fault_ok_cntr < 60)
       {
         if (chck_air(AIR_Q_THRES))
         {
@@ -114,7 +173,15 @@ void loop() {
           fault_ok_cntr++;
         }
       }
-      delay(1000);
+      else
+      {
+        Serial.println("Jumping to idle");
+        curr_state = fsm_idle;
+      }
+      digitalWrite(FAULT_LED,HIGH); //For blink of Fault LED, can be optimized
+      delay(500);
+      digitalWrite(FAULT_LED,LOW);
+      delay(500);
       break;
   }
 }
@@ -171,9 +238,9 @@ boolean chck_flame(unsigned int f_thres)
 
 void ignition_spark_cntrl(unsigned int spark_on_dly) //delay in seconds
 {
-  digitalWrite(IGN_CNTRL,HIGH); //Start ignition
-  delay(spark_on_dly*1000);
   digitalWrite(IGN_CNTRL,LOW); //Start ignition
+  delay(spark_on_dly*1000);
+  digitalWrite(IGN_CNTRL,HIGH); //Start ignition
 }
 
 //------------------------------------------------
@@ -183,37 +250,100 @@ void ignition_spark_cntrl(unsigned int spark_on_dly) //delay in seconds
 boolean gas_valve_cntrl(unsigned int valve_pos)
 {
   unsigned int cur_pos = analogRead(GAS_VALVE_POS_ADC);
-  //Control if valve needs to be implemented in the future for the safety reasons
-  if (valve_pos < cur_pos)
+  unsigned int prev_pos = 0;
+  unsigned char iter = 0;
+  
+  if (valve_pos < GAS_VALVE_OFF_POS)
   {
-    digitalWrite(GAS_VALVE_POS_PIN,HIGH);
-    digitalWrite(GAS_VALVE_NEG_PIN,LOW);
-    cur_pos = analogRead(GAS_VALVE_POS_ADC);
-    while (valve_pos < cur_pos)
+    while (cur_pos > GAS_VALVE_OFF_POS)
     {
+      gas_valve_act(GAS_VALVE_OFF);
+      delay(50);
       cur_pos = analogRead(GAS_VALVE_POS_ADC);
-      delay(5);
     }
-    digitalWrite(GAS_VALVE_POS_PIN,LOW);
+    gas_valve_act(GAS_VALVE_STOP);
   }
-  else if (valve_pos > cur_pos)
+  else if (valve_pos > GAS_VALVE_MAX_POS)
   {
-    digitalWrite(GAS_VALVE_POS_PIN,LOW);
-    digitalWrite(GAS_VALVE_NEG_PIN,HIGH);
-    cur_pos = analogRead(GAS_VALVE_POS_ADC);
-    while (valve_pos > cur_pos)
+    while (cur_pos < GAS_VALVE_MAX_POS)
     {
+      gas_valve_act(GAS_VALVE_ON);
+      delay(50);
       cur_pos = analogRead(GAS_VALVE_POS_ADC);
-      delay(5);
     }
-    digitalWrite(GAS_VALVE_NEG_PIN,LOW);
+    gas_valve_act(GAS_VALVE_STOP);
   }
   else
   {
-    return true;
+    if (valve_pos > cur_pos)
+    {
+      while(valve_pos > cur_pos)
+      {
+        gas_valve_act(GAS_VALVE_ON);
+        delay(50);
+        cur_pos = analogRead(GAS_VALVE_POS_ADC);
+      }
+      gas_valve_act(GAS_VALVE_STOP);
+    }
+    else if (valve_pos < cur_pos)
+    {
+      while(valve_pos < cur_pos)
+      {
+        gas_valve_act(GAS_VALVE_OFF);
+        delay(50);
+        cur_pos = analogRead(GAS_VALVE_POS_ADC);
+      }
+      gas_valve_act(GAS_VALVE_STOP);
+    }
   }
 
   return true;
+}
+
+//------------------------------------------------
+//Gas valve actuation functions:
+//------------------------------------------------
+
+void gas_valve_act(unsigned char state)
+{
+  if (state == GAS_VALVE_ON)
+  {
+    digitalWrite(GAS_VALVE_POS_PIN,HIGH);
+    digitalWrite(GAS_VALVE_NEG_PIN,LOW);
+  }
+  else if (state == GAS_VALVE_OFF)
+  {
+    digitalWrite(GAS_VALVE_POS_PIN,LOW);
+    digitalWrite(GAS_VALVE_NEG_PIN,HIGH);
+  }
+  else
+  {
+    digitalWrite(GAS_VALVE_POS_PIN,LOW);
+    digitalWrite(GAS_VALVE_NEG_PIN,LOW);
+  }
+}
+
+//------------------------------------------------
+//Audio control function:
+//------------------------------------------------
+
+void audio_cntrl(audio_states nxt_state)
+{
+  switch(nxt_state)
+  {
+    case audio_in_sig:
+      digitalWrite(AUDIO_SEL_PIN,LOW);
+      digitalWrite(AUDIO_DIS_PIN,LOW);
+      break;
+    case alarm_sig:
+      digitalWrite(AUDIO_SEL_PIN,HIGH);
+      digitalWrite(AUDIO_DIS_PIN,LOW);
+      break;
+    case audio_off:
+      digitalWrite(AUDIO_SEL_PIN,LOW);
+      digitalWrite(AUDIO_DIS_PIN,HIGH);
+      break;
+  }
 }
 
 //------------------------------------------------

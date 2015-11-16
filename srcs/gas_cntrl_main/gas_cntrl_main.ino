@@ -10,7 +10,7 @@
 
 //#define AIR_SENSOR_0    0
 //#deifne AIR_SENSOR_1    1
-#define AIR_Q_THRES     800
+#define AIR_Q_THRES     150
 
 //#define FLAME_CH0       2
 //#define FLAME_CH1       3
@@ -23,16 +23,19 @@
 int RECV_PIN = 11; 
 #define RC_ON           0xC101E57B
 #define RC_OFF          0x97483BFB
+#define RC_UP           0x511DBB
+#define RC_DOWN         0xA3C8EDDB
 
 #define GAS_VALVE_POS_PIN   4
 #define GAS_VALVE_NEG_PIN   5
 #define GAS_VALVE_POS_ADC   5
-#define GAS_VALVE_MAX_POS   950
+#define GAS_VALVE_MAX_POS   980
 #define GAS_VALVE_OFF_POS   350
 #define GAS_VALVE_TYP_POS   700
 #define GAS_VALVE_ON        1
 #define GAS_VALVE_OFF       0
 #define GAS_VALVE_STOP      2
+#define FLAME_STEP          50
 
 #define ACTIVE_LED          6
 #define FAULT_LED           7
@@ -54,6 +57,7 @@ decode_results results;
 
 unsigned char rc5_prev_toogle = 1;
 unsigned char fault_ok_cntr = 0;
+int valve_cur_pos = GAS_VALVE_TYP_POS;
 
 //------------------------------------------------
 //Functions:
@@ -120,23 +124,25 @@ void loop() {
             gas_valve_cntrl(GAS_VALVE_TYP_POS);
             curr_state = fsm_active;
             digitalWrite(ACTIVE_LED,HIGH);
+            valve_cur_pos = GAS_VALVE_TYP_POS;
+            audio_cntrl(audio_in_sig);
           }
           else
           {
             Serial.println("Flame not OK, jumping to fault");
             gas_valve_cntrl(GAS_VALVE_OFF_POS);
             curr_state = fsm_fault;
+            audio_cntrl(alarm_sig);
           }
-
-          irrecv.resume();
         }
+        irrecv.resume();
       }
 
       if (chck_air(AIR_Q_THRES))                   //Check air quality
       {
         Serial.println("Jumping to fault");
         curr_state = fsm_fault;
-        //Need to enable alarm audio signal
+        audio_cntrl(alarm_sig);
       }
       
       break;
@@ -148,8 +154,28 @@ void loop() {
           Serial.println("OFF");
           curr_state = fsm_idle;
           gas_valve_cntrl(GAS_VALVE_OFF_POS);
+          audio_cntrl(audio_off);
         }
-        //Add commands parsing for flame increase and decrease
+        else if (results.value == RC_UP)
+        {
+          if (valve_cur_pos <= (GAS_VALVE_MAX_POS - FLAME_STEP))
+          {
+            Serial.println("UP");
+            Serial.println(valve_cur_pos);
+            valve_cur_pos += FLAME_STEP;
+            gas_valve_cntrl(valve_cur_pos);
+          }
+        }
+        else if (results.value == RC_DOWN)
+        {
+          if (valve_cur_pos >= (GAS_VALVE_OFF_POS + FLAME_STEP))
+          {
+            Serial.println("DOWN");
+            Serial.println(valve_cur_pos);
+            valve_cur_pos -= FLAME_STEP;
+            gas_valve_cntrl(valve_cur_pos);
+          }
+        }
         irrecv.resume();
       }
 
@@ -158,7 +184,7 @@ void loop() {
         Serial.println("Active fault");
         curr_state = fsm_fault;
         gas_valve_cntrl(GAS_VALVE_OFF_POS);
-        //Need to enable alarm audio signal
+        audio_cntrl(alarm_sig);
       }
       break;
     case fsm_fault:                                 //FAULT state
@@ -177,6 +203,7 @@ void loop() {
       {
         Serial.println("Jumping to idle");
         curr_state = fsm_idle;
+        audio_cntrl(audio_off);
       }
       digitalWrite(FAULT_LED,HIGH); //For blink of Fault LED, can be optimized
       delay(500);

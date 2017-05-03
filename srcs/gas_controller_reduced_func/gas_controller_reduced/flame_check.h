@@ -15,6 +15,7 @@ class FlameCheck
 		boolean CheckFlameThreshold();
 		void SetFlameThreshold(unsigned int threshold);
 		unsigned int GetFlameThreshold();
+    unsigned int GetFlameValue();
 	private:
 		unsigned int current_threshold;
 		int sensor_pin;

@@ -12,6 +12,7 @@
 #include "gas_sensor.h"
 #include "gas_ignition.h"
 #include "flame_check.h"
+#include "gas_pump.h"
 
 //------------------------------------------------
 //Defines:
@@ -26,11 +27,13 @@
 #define IGN_CNTRL       2
 #define IGN_TIME        3 //!< ignition spark on time in seconds
 
+#define PUMP_CNTRL_PIN  5 //gas pump control pin
+
 int RECV_PIN = 11;  //!< IR remote receiver pin number
 #define RC_ON           0xC101E57B  //!< IR command to power on
 #define RC_OFF          0x97483BFB  //!< IR command to power off
-#define RC_UP           0x511DBB  //!< IR command to increase gas flow
-#define RC_DOWN         0xA3C8EDDB  //!< IR command to decrease gas flow
+#define RC_PUMP         0x511DBB  //!< IR command to ON/OFF gas pump
+//#define RC_DOWN         0xA3C8EDDB  //!< IR command to decrease gas flow
 
 #define GAS_VALVE_PIN   4 //!< gas valve control pin
 
@@ -51,6 +54,8 @@ GasSensor gas_sensor(AIR_Q_PIN, AIR_Q_THRES);
 
 FlameCheck flame_check(FLAME_PIN, FLAME_THRES);
 
+GasPump gas_pump(PUMP_CNTRL_PIN);
+
 unsigned char fault_ok_cntr = 0;
 
 //------------------------------------------------
@@ -70,6 +75,11 @@ void loop() {
       if (irrecv.decode(&results)) {
         if (results.value == RC_ON) {
           Serial.println("Starting ignition");
+          
+          if (gas_pump.GetPumpState() == PUMP_ON) { //turn off pump if ignition is starting
+            gas_pump.SetPumpState(PUMP_OFF);
+          }
+          
           gas_valve.SetValveState(VALVE_ON);
           gas_ign.IgnitionOn();
           if (flame_check.CheckFlameThreshold()) {
@@ -82,13 +92,22 @@ void loop() {
             gas_controller.SetStateMachineState(fsm_fault);
           }
         }
+        else if (results.value == RC_PUMP) { //gas pump IR control
+          if (gas_pump.GetPumpState() == PUMP_ON) {
+            gas_pump.SetPumpState(PUMP_OFF);
+          }
+          else {
+            gas_pump.SetPumpState(PUMP_ON);
+          }
+        }
         irrecv.resume();
       }
       if (gas_sensor.CheckGasThreshold()) {                   //Check air quality
         Serial.println("Jumping to fault");
         gas_valve.SetValveState(VALVE_OFF);
         gas_controller.SetStateMachineState(fsm_fault);
-      }     
+      }  
+         
       break;
     case fsm_active:                                //ACTIVE state
       if (irrecv.decode(&results)) {
@@ -121,4 +140,9 @@ void loop() {
       }
       break;
   }
+
+  Serial.println("Gas:");
+  Serial.println(gas_sensor.GetGasValue());
+  Serial.println("Flame:");
+  Serial.println(flame_check.GetFlameValue());
 }

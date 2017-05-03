@@ -15,6 +15,7 @@ class GasSensor
 		boolean CheckGasThreshold();
 		void SetGasThreshold(unsigned int threshold);
 		unsigned int GetGasThreshold();
+   unsigned int GetGasValue();
 	private:
 		unsigned int current_threshold;
 		int sensor_pin;

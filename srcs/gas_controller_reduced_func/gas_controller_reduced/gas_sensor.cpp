@@ -32,3 +32,9 @@ unsigned int GasSensor::GetGasThreshold()
 {
 	return current_threshold;
 }
+
+unsigned int GasSensor::GetGasValue()
+{
+  return analogRead(sensor_pin);
+}
+

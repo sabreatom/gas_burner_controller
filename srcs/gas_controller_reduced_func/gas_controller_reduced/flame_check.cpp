@@ -32,3 +32,9 @@ unsigned int FlameCheck::GetFlameThreshold()
 {
 	return current_threshold;
 }
+
+unsigned int FlameCheck::GetFlameValue()
+{
+  return analogRead(sensor_pin);
+}
+

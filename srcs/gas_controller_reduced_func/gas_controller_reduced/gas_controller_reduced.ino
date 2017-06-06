@@ -34,9 +34,10 @@
 #define AUDIO_OFF     HIGH
 
 int RECV_PIN = 11;  //!< IR remote receiver pin number
-#define RC_ON           0xC101E57B  //!< IR command to power on
-#define RC_OFF          0x97483BFB  //!< IR command to power off
-#define RC_PUMP         0x511DBB  //!< IR command to ON/OFF gas pump
+#define RC_ON           0xCE1FCDDD  //!< IR command to power on
+#define RC_OFF          0xCE1FCDDD  //!< IR command to power off
+#define RC_PUMP         0x2C2E6663  //!< IR command to ON/OFF gas pump
+#define RC_COLD_START   0x5AAD0C1
 //#define RC_DOWN         0xA3C8EDDB  //!< IR command to decrease gas flow
 
 #define GAS_VALVE_PIN   4 //!< gas valve control pin
@@ -106,12 +107,24 @@ void loop() {
         else if (results.value == RC_PUMP) { //gas pump IR control
           if (gas_pump.GetPumpState() == PUMP_ON) {
             gas_pump.SetPumpState(PUMP_OFF);
+            Serial.println("Pump off");
           }
           else {
             gas_pump.SetPumpState(PUMP_ON);
             delay(500);
             gas_ign.IgnitionOn();
+            Serial.println("Pump on");
           }
+        }
+        else if (results.value == RC_COLD_START) { //for cold start to fill tube with gas
+          Serial.println("Filling tube with gas");
+          if (gas_pump.GetPumpState() == PUMP_ON) { //turn off pump if ignition is starting
+            gas_pump.SetPumpState(PUMP_OFF);
+          }
+          
+          gas_valve.SetValveState(VALVE_ON);
+          delay(3000);
+          gas_valve.SetValveState(VALVE_OFF);
         }
         irrecv.resume();
       }

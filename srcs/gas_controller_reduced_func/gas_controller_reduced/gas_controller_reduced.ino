@@ -22,12 +22,16 @@
 #define AIR_Q_THRES     300 //!< air quality sensor's threshold value to detect gas or smoke
 
 #define FLAME_PIN       1
-#define FLAME_THRES     600  //!< IR flame sensor threshold value to detect that flame is burning
+#define FLAME_THRES     100  //!< IR flame sensor threshold value to detect that flame is burning
 
 #define IGN_CNTRL       2
 #define IGN_TIME        3 //!< ignition spark on time in seconds
 
 #define PUMP_CNTRL_PIN  5 //gas pump control pin
+
+#define AUDIO_AMP_CNTRL 6 //audio amplifier control pin
+#define AUDIO_ON      LOW
+#define AUDIO_OFF     HIGH
 
 int RECV_PIN = 11;  //!< IR remote receiver pin number
 #define RC_ON           0xC101E57B  //!< IR command to power on
@@ -58,12 +62,17 @@ GasPump gas_pump(PUMP_CNTRL_PIN);
 
 unsigned char fault_ok_cntr = 0;
 
+unsigned int dly_counter = 0;
+
 //------------------------------------------------
 
 void setup() {
   //Serial port setup for debug during development:
   Serial.begin(9600);
 
+  pinMode(AUDIO_AMP_CNTRL, OUTPUT);
+  digitalWrite(AUDIO_AMP_CNTRL, AUDIO_OFF);
+  
   //Setup RC-5 receiver:
   irrecv.enableIRIn(); // Start the receiver
 }
@@ -81,8 +90,10 @@ void loop() {
           }
           
           gas_valve.SetValveState(VALVE_ON);
+          delay(500); //need delay between valve open and start sparking so that there will be gas and also reduce problem with transiant
           gas_ign.IgnitionOn();
           if (flame_check.CheckFlameThreshold()) {
+            digitalWrite(AUDIO_AMP_CNTRL, AUDIO_ON);
             Serial.println("Flame OK, jumping to active");
             gas_controller.SetStateMachineState(fsm_active);
           }
@@ -98,6 +109,8 @@ void loop() {
           }
           else {
             gas_pump.SetPumpState(PUMP_ON);
+            delay(500);
+            gas_ign.IgnitionOn();
           }
         }
         irrecv.resume();
@@ -112,6 +125,7 @@ void loop() {
     case fsm_active:                                //ACTIVE state
       if (irrecv.decode(&results)) {
         if (results.value == RC_OFF) {
+          digitalWrite(AUDIO_AMP_CNTRL, AUDIO_OFF);
           Serial.println("OFF");
           gas_controller.SetStateMachineState(fsm_idle);
           gas_valve.SetValveState(VALVE_OFF);
@@ -120,10 +134,15 @@ void loop() {
       }
       if (gas_sensor.CheckGasThreshold()) {                   //Check air quality
         Serial.println("Jumping to fault");
+        digitalWrite(AUDIO_AMP_CNTRL, AUDIO_OFF); //TODO in final product will need to start alert
         gas_valve.SetValveState(VALVE_OFF);
         gas_controller.SetStateMachineState(fsm_fault);
       }
+      if (!flame_check.CheckFlameThreshold()) { //TODO: need to implement timeout if gas doesn't ignitite go to fault state
+        gas_ign.IgnitionOn();
+      }
       break;
+      
     case fsm_fault:                                 //FAULT state
       if (fault_ok_cntr < 60) {
         if (gas_sensor.CheckGasThreshold()) {
@@ -141,8 +160,14 @@ void loop() {
       break;
   }
 
-  Serial.println("Gas:");
-  Serial.println(gas_sensor.GetGasValue());
-  Serial.println("Flame:");
-  Serial.println(flame_check.GetFlameValue());
+  if (dly_counter >= 60000){ //temporary for testing gas sensor and flame sensor
+    dly_counter = 0;
+    Serial.println("Gas:");
+    Serial.println(gas_sensor.GetGasValue());
+    Serial.println("Flame:");
+    Serial.println(flame_check.GetFlameValue());
+  }
+  else{
+    dly_counter++;
+  }
 }

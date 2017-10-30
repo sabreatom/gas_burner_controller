@@ -40,6 +40,12 @@ int RECV_PIN = 11;  //!< IR remote receiver pin number
 #define RC_COLD_START   0x5AAD0C1
 //#define RC_DOWN         0xA3C8EDDB  //!< IR command to decrease gas flow
 
+//Alternative IR codes:
+#define RC_ALT_VALVE    0x2C2E6663
+#define RC_ALT_IGN      0x5AAD0C1
+#define RC_ALT_AUDIO    0xA480D5C7
+#define RC_ALT_PUMP     0x19272021
+
 #define GAS_VALVE_PIN   4 //!< gas valve control pin
 
 //------------------------------------------------
@@ -80,108 +86,52 @@ void setup() {
 }
 
 void loop() {
-  switch(gas_controller.GetStateMachineState())
-  {
-    case fsm_idle:                                    //IDLE state
-      if (irrecv.decode(&results)) {
-        if (results.value == RC_ON) {
-          Serial.println("Starting ignition");
-          
-          if (gas_pump.GetPumpState() == PUMP_ON) { //turn off pump if ignition is starting
-            gas_pump.SetPumpState(PUMP_OFF);
-          }
-          
-          gas_valve.SetValveState(VALVE_ON);
-          delay(1000); //need delay between valve open and start sparking so that there will be gas and also reduce problem with transiant
-          gas_ign.IgnitionOn();
-          if (flame_check.CheckFlameThreshold()) {
-            digitalWrite(AUDIO_AMP_CNTRL, AUDIO_ON);
-            Serial.println("Flame OK, jumping to active");
-            gas_controller.SetStateMachineState(fsm_active);
-          }
-          else {
-            Serial.println("Flame not OK, jumping to fault");
-            gas_valve.SetValveState(VALVE_OFF);
-            gas_controller.SetStateMachineState(fsm_fault);
-          }
-        }
-        else if (results.value == RC_PUMP) { //gas pump IR control
-          if (gas_pump.GetPumpState() == PUMP_ON) {
-            gas_pump.SetPumpState(PUMP_OFF);
-            Serial.println("Pump off");
-          }
-          else {
-            gas_pump.SetPumpState(PUMP_ON);
-            delay(500);
-            gas_ign.IgnitionOn();
-            Serial.println("Pump on");
-          }
-        }
-        else if (results.value == RC_COLD_START) { //for cold start to fill tube with gas
-          Serial.println("Filling tube with gas");
-          if (gas_pump.GetPumpState() == PUMP_ON) { //turn off pump if ignition is starting
-            gas_pump.SetPumpState(PUMP_OFF);
-          }
-          
-          gas_valve.SetValveState(VALVE_ON);
-          delay(3000);
-          gas_valve.SetValveState(VALVE_OFF);
-        }
-        irrecv.resume();
-      }
-      if (gas_sensor.CheckGasThreshold()) {                   //Check air quality
-        Serial.println("Jumping to fault");
-        gas_valve.SetValveState(VALVE_OFF);
-        gas_controller.SetStateMachineState(fsm_fault);
-      }  
-         
-      break;
-    case fsm_active:                                //ACTIVE state
-      if (irrecv.decode(&results)) {
-        if (results.value == RC_OFF) {
-          digitalWrite(AUDIO_AMP_CNTRL, AUDIO_OFF);
-          Serial.println("OFF");
-          gas_controller.SetStateMachineState(fsm_idle);
-          gas_valve.SetValveState(VALVE_OFF);
-        }
-        irrecv.resume();
-      }
-      if (gas_sensor.CheckGasThreshold()) {                   //Check air quality
-        Serial.println("Jumping to fault");
-        digitalWrite(AUDIO_AMP_CNTRL, AUDIO_OFF); //TODO in final product will need to start alert
-        gas_valve.SetValveState(VALVE_OFF);
-        gas_controller.SetStateMachineState(fsm_fault);
-      }
-      if (!flame_check.CheckFlameThreshold()) { //TODO: need to implement timeout if gas doesn't ignitite go to fault state
-        gas_ign.IgnitionOn();
-      }
-      break;
+  if (irrecv.decode(&results)) {
+    if (results.value == RC_ALT_VALVE) {
+      Serial.println("Valve command");
       
-    case fsm_fault:                                 //FAULT state
-      if (fault_ok_cntr < 60) {
-        if (gas_sensor.CheckGasThreshold()) {
-          fault_ok_cntr = 0;
-        }
-        else {
-          fault_ok_cntr++;
-        }
+      if (gas_valve.GetValveState() == VALVE_ON) {  //gas valve command
+        Serial.println("Gas valve off");
+        gas_valve.SetValveState(VALVE_OFF);
       }
       else {
-        Serial.println("Jumping to idle");
-        gas_controller.SetStateMachineState(fsm_idle);
-        gas_valve.SetValveState(VALVE_OFF);
+        Serial.println("Gas valve on");
+        gas_valve.SetValveState(VALVE_ON);
       }
-      break;
-  }
+    }
+    else if (results.value == RC_ALT_IGN) { //ignition command
+      Serial.println("Ignition command");
 
-  if (dly_counter >= 60000){ //temporary for testing gas sensor and flame sensor
-    dly_counter = 0;
-    Serial.println("Gas:");
-    Serial.println(gas_sensor.GetGasValue());
-    Serial.println("Flame:");
-    Serial.println(flame_check.GetFlameValue());
-  }
-  else{
-    dly_counter++;
+      gas_ign.IgnitionOn();
+    }
+    else if (results.value == RC_ALT_AUDIO) { //audio control command
+      Serial.println("Audio command");
+
+      if (digitalRead(AUDIO_AMP_CNTRL) == AUDIO_ON) {
+        Serial.println("Audio off");
+        digitalWrite(AUDIO_AMP_CNTRL, AUDIO_OFF);
+      }
+      else {
+        Serial.println("Audio on");
+        digitalWrite(AUDIO_AMP_CNTRL, AUDIO_ON);
+      }
+    }
+    else if (results.value == RC_ALT_PUMP) { //pump control command
+      Serial.println("Pump command");
+
+      if (gas_pump.GetPumpState() == PUMP_ON) {
+        Serial.println("Pump off");
+        gas_pump.SetPumpState(PUMP_OFF);
+      }
+      else {
+        Serial.println("Pump on");
+        gas_pump.SetPumpState(PUMP_ON);
+      }
+    }
+    else {
+      Serial.println("Unknown command");
+    }
+
+    irrecv.resume();
   }
 }

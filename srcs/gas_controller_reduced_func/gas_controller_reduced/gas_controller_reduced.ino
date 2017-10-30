@@ -76,6 +76,7 @@ void setup() {
   
   //Setup RC-5 receiver:
   irrecv.enableIRIn(); // Start the receiver
+  Serial.println("System initialization finished!");
 }
 
 void loop() {
@@ -91,7 +92,7 @@ void loop() {
           }
           
           gas_valve.SetValveState(VALVE_ON);
-          delay(500); //need delay between valve open and start sparking so that there will be gas and also reduce problem with transiant
+          delay(1000); //need delay between valve open and start sparking so that there will be gas and also reduce problem with transiant
           gas_ign.IgnitionOn();
           if (flame_check.CheckFlameThreshold()) {
             digitalWrite(AUDIO_AMP_CNTRL, AUDIO_ON);

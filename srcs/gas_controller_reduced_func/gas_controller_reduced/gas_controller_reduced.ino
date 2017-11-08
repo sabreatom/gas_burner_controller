@@ -132,6 +132,7 @@ void loop() {
       Serial.println("Unknown command");
     }
 
+    delay(500);
     irrecv.resume();
   }
 }
